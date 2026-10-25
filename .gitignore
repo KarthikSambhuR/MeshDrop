@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+shared/*
+!shared/.gitkeep
+downloads/
+web/node_modules/
+web/dist/
