@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import sys
 import threading
 import time
 import uuid
@@ -19,6 +20,7 @@ from meshdrop import DEFAULT_TCP_PORT, DISCOVERY_PORT, MeshDrop, unique_path
 ROOT = Path(__file__).resolve().parent
 WEB_ROOT = ROOT / "web"
 DIST_ROOT = WEB_ROOT / "dist"
+WINDOW_ICON = WEB_ROOT / "public" / "meshdrop.ico"
 
 
 def create_app(node: MeshDrop) -> Flask:
@@ -221,6 +223,20 @@ def valid_port(value: str) -> int:
     return port
 
 
+def apply_windows_window_icon(window) -> None:
+    """Replace pywebview's inherited Python executable icon on Windows."""
+    if sys.platform != "win32" or window.native is None or not WINDOW_ICON.is_file():
+        return
+    try:
+        from System.Drawing import Icon
+
+        icon = Icon(str(WINDOW_ICON))
+        window.native.Icon = icon
+        window._meshdrop_icon = icon  # Keep the .NET icon alive with its window.
+    except Exception as exc:
+        print(f"Could not apply the MeshDrop window icon: {exc}", flush=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the MeshDrop desktop app")
     parser.add_argument("positional_port", nargs="?", type=valid_port, default=DEFAULT_TCP_PORT,
@@ -249,7 +265,7 @@ def main() -> int:
         server = make_server("127.0.0.1", args.web_port, create_app(node), threaded=True)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         url = f"http://127.0.0.1:{server.server_port}"
-        webview.create_window(
+        window = webview.create_window(
             "MeshDrop",
             url,
             width=1440,
@@ -257,6 +273,7 @@ def main() -> int:
             min_size=(900, 640),
             background_color="#08090b",
         )
+        window.events.before_show += apply_windows_window_icon
         webview.start(debug=False)
     except Exception as exc:
         print(f"Could not start the MeshDrop desktop app: {exc}")

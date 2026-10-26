@@ -24,6 +24,7 @@ cd ..
 ```
 
 Start a peer. MeshDrop opens in its own desktop window; the local Flask server runs privately in the background to serve the interface and API.
+The native window uses the MeshDrop logo as its Windows title bar and taskbar icon.
 
 ```powershell
 python app.py 50000 Alice
@@ -78,7 +79,7 @@ TCP server  <----------------------->  TCP client requests file
 app.py             Flask API host and native pywebview desktop launcher
 meshdrop.py        UDP discovery, TCP protocol, transfer, and CLI
 web/src/           React interface, custom MeshDrop logo, GSAP, and Framer Motion
-web/public/        App logo and browser icon
+web/public/        App logo, browser favicon, and Windows app icon
 web/dist/          Built frontend served by Flask
 shared/            Files this peer offers (created on first run)
 downloads/<name>/  Files received by this peer (created on first run)
