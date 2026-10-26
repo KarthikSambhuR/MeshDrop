@@ -244,7 +244,7 @@ function App() {
 
       <aside className="sidebar">
         <a className="brand" href="#workspace" aria-label="MeshDrop workspace">
-          <span className="brand-mark"><ArrowDownUp size={18} strokeWidth={2.4} /></span>
+          <span className="brand-mark"><img src="/meshdrop-mark.svg" alt="" /></span>
           <span className="brand-name">mesh<span>drop</span><i>.</i></span>
         </a>
 

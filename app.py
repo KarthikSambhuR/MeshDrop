@@ -1,4 +1,4 @@
-"""Flask dashboard for a local MeshDrop peer."""
+"""Native desktop dashboard for a local MeshDrop peer."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ import uuid
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
+import webview
+from werkzeug.serving import make_server
 from werkzeug.utils import secure_filename
 
 from meshdrop import DEFAULT_TCP_PORT, DISCOVERY_PORT, MeshDrop, unique_path
@@ -28,6 +30,10 @@ def create_app(node: MeshDrop) -> Flask:
     @app.get("/")
     def index():
         return send_from_directory(DIST_ROOT, "index.html")
+
+    @app.get("/<path:asset>")
+    def built_asset(asset: str):
+        return send_from_directory(DIST_ROOT, asset)
 
     @app.get("/api/state")
     def state():
@@ -205,28 +211,62 @@ def download_from_peer(node: MeshDrop, peer: dict, filename: str, transfer_id: s
             sock.close()
 
 
+def valid_port(value: str) -> int:
+    try:
+        port = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("port must be a number") from exc
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError("port must be between 1 and 65535")
+    return port
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run the MeshDrop web dashboard")
-    parser.add_argument("--name", default="MeshDrop", help="name shown to peers")
+    parser = argparse.ArgumentParser(description="Run the MeshDrop desktop app")
+    parser.add_argument("positional_port", nargs="?", type=valid_port, default=DEFAULT_TCP_PORT,
+                        help="peer TCP port (default: %(default)s)")
+    parser.add_argument("positional_name", nargs="?", help="your display name on the network")
+    parser.add_argument("--name", dest="name_option", default=None, help="name shown to peers")
     parser.add_argument("--share", type=Path, default=Path("shared"), help="folder made available to peers")
-    parser.add_argument("--downloads", type=Path, default=Path("downloads"), help="where received files are saved")
-    parser.add_argument("--port", type=int, default=DEFAULT_TCP_PORT, help="peer-to-peer TCP port")
+    parser.add_argument("--downloads", type=Path, default=ROOT / "downloads",
+                        help="base folder for received files; a folder named after you is created inside")
+    parser.add_argument("--port", dest="port_option", type=valid_port, default=None,
+                        help="peer-to-peer TCP port (overrides the positional port)")
     parser.add_argument("--discovery-port", type=int, default=DISCOVERY_PORT, help="UDP discovery port")
-    parser.add_argument("--web-port", type=int, default=8000, help="local dashboard port")
+    parser.add_argument("--web-port", type=int, default=8000,
+                        help="local port used by the app's embedded webview")
     args = parser.parse_args()
 
-    node = MeshDrop(args.name, args.share, args.downloads, args.port, args.discovery_port)
+    name = (args.name_option or args.positional_name or "MeshDrop").strip() or "MeshDrop"
+    port = args.port_option if args.port_option is not None else args.positional_port
+    downloads_base = args.downloads if args.downloads.is_absolute() else ROOT / args.downloads
+    user_folder = secure_filename(name) or "MeshDrop"
+    downloads_dir = downloads_base / user_folder
+    node = MeshDrop(name, args.share, downloads_dir, port, args.discovery_port)
+    server = None
     try:
         node.start()
-        print(f"Dashboard: http://127.0.0.1:{args.web_port}")
-        create_app(node).run(host="127.0.0.1", port=args.web_port, threaded=True, debug=False,
-                             use_reloader=False)
-    except OSError as exc:
-        print(f"Could not start MeshDrop: {exc}")
+        server = make_server("127.0.0.1", args.web_port, create_app(node), threaded=True)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        url = f"http://127.0.0.1:{server.server_port}"
+        webview.create_window(
+            "MeshDrop",
+            url,
+            width=1440,
+            height=940,
+            min_size=(900, 640),
+            background_color="#08090b",
+        )
+        webview.start(debug=False)
+    except Exception as exc:
+        print(f"Could not start the MeshDrop desktop app: {exc}")
         return 1
     except KeyboardInterrupt:
         pass
     finally:
+        if server is not None:
+            server.shutdown()
+            server.server_close()
         node.close()
     return 0
 
