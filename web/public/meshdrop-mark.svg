@@ -1,7 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
-  <path d="M8 8.5h16M9.2 10.5l5.5 10M22.8 10.5l-5.5 10" stroke="#101116" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M16 11.5v7m-2.7-2.8L16 18.5l2.7-2.8" stroke="#101116" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="7" cy="8.5" r="2.4" fill="#101116"/>
-  <circle cx="25" cy="8.5" r="2.4" fill="#101116"/>
-  <circle cx="16" cy="23.5" r="2.4" fill="#101116"/>
+  <!-- Mobile Data: Uplink Arrow -->
+  <path d="M11 6.2L16.5 12.2H12.4V23.5C12.4 24.3 11.8 25 11 25C10.2 25 9.6 24.3 9.6 23.5V12.2H5.5L11 6.2Z" fill="#101116" stroke="#101116" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"/>
+  <!-- Mobile Data: Downlink Arrow -->
+  <path d="M21 25.8L15.5 19.8H19.6V8.5C19.6 7.7 20.2 7 21 7C21.8 7 22.4 7.7 22.4 8.5V19.8H26.5L21 25.8Z" fill="#101116" stroke="#101116" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"/>
 </svg>

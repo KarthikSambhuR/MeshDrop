@@ -24,27 +24,28 @@ cd ..
 ```
 
 Start a peer. MeshDrop opens in its own desktop window; the local Flask server runs privately in the background to serve the interface and API.
-The native window uses the MeshDrop logo as its Windows title bar and taskbar icon.
+The native window uses the MeshDrop logo as its Windows title bar and taskbar icon, and displays the peer name in the title bar.
 
 ```powershell
-python app.py 50000 Alice
+python app.py Alice
 ```
 
-The quick form is `python app.py <port> <name>`: the port is your peer-to-peer TCP port (default `50000`), and the name is what other devices see. Received files are saved in `downloads/<name>/`, for example `downloads/Alice/`. The older `--name Alice --port 50000` form still works too.
+The simple form is `python app.py <name>` (for example, `python app.py Alice`). You can also specify an explicit port like `python app.py 50000 Alice` or use flags like `--name Alice --port 50000`. Received files are saved in `downloads/<name>/`, and files you share are kept in `shared/<name>/`.
 
 Use the sidebar to switch between the overview, shared files, peers, and transfer queue. Add files with the upload button or drag-and-drop. If automatic discovery is blocked, use **Peers → Add peer** with the other node's IP address and TCP port. The dashboard runs on your own computer; the actual file transfer still goes directly between peers over TCP.
 
-On a second computer, run the same install/build steps once and start another peer. Its own MeshDrop window will open:
+On a second computer or another terminal on the same computer, start another peer:
 
 ```powershell
-python app.py 50000 Bob
+python app.py Bob
 ```
 
-For two peers on one computer, give the second process a different TCP port and separate folders:
+When running multiple peers on the same machine, MeshDrop automatically:
 
-```powershell
-python app.py 50001 Bob --web-port 8001 --share bob_shared
-```
+- Allocates independent web ports for each window's backend.
+- Auto-assigns the next available TCP transfer port (e.g. `50000`, `50001`, etc.) so peers never collide.
+- Isolates WebView2 sessions and storage so windows never share state or cookies.
+- Creates separate `shared/<name>/` and `downloads/<name>/` folders for each peer.
 
 Peers on the same LAN should appear automatically within a few seconds. If UDP discovery is blocked by Wi-Fi isolation or a firewall, use **Peers → Add peer** to enter the other device's IP and TCP port. Received files are SHA-256 checked before saving to the named folder under `downloads/`. Use `--downloads` to choose a different base folder.
 

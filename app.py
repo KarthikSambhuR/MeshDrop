@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import shutil
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -15,7 +17,11 @@ import webview
 from werkzeug.serving import make_server
 from werkzeug.utils import secure_filename
 
-from meshdrop import DEFAULT_TCP_PORT, DISCOVERY_PORT, MeshDrop, unique_path
+if sys.platform == "win32":
+    import werkzeug.serving
+    werkzeug.serving.BaseWSGIServer.allow_reuse_address = False
+
+from meshdrop import DEFAULT_TCP_PORT, DISCOVERY_PORT, MeshDrop, parse_peer_args, unique_path
 
 ROOT = Path(__file__).resolve().parent
 WEB_ROOT = ROOT / "web"
@@ -205,6 +211,8 @@ def download_from_peer(node: MeshDrop, peer: dict, filename: str, transfer_id: s
         temporary.replace(destination)
         update(status="complete", received=size, progress=100, saved_path=str(destination))
     except Exception as exc:
+        if temporary.is_file():
+            temporary.unlink(missing_ok=True)
         update(status="failed", error=str(exc))
     finally:
         if stream:
@@ -232,6 +240,7 @@ def apply_windows_window_icon(window) -> None:
 
         icon = Icon(str(WINDOW_ICON))
         window.native.Icon = icon
+        window.native.Text = window.title
         window._meshdrop_icon = icon  # Keep the .NET icon alive with its window.
     except Exception as exc:
         print(f"Could not apply the MeshDrop window icon: {exc}", flush=True)
@@ -239,34 +248,50 @@ def apply_windows_window_icon(window) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the MeshDrop desktop app")
-    parser.add_argument("positional_port", nargs="?", type=valid_port, default=DEFAULT_TCP_PORT,
-                        help="peer TCP port (default: %(default)s)")
-    parser.add_argument("positional_name", nargs="?", help="your display name on the network")
+    parser.add_argument("args", nargs="*", help="optional peer name or port (e.g. 'Alice', '50000 Alice')")
     parser.add_argument("--name", dest="name_option", default=None, help="name shown to peers")
-    parser.add_argument("--share", type=Path, default=Path("shared"), help="folder made available to peers")
+    parser.add_argument("--share", type=Path, default=None, help="folder made available to peers")
     parser.add_argument("--downloads", type=Path, default=ROOT / "downloads",
                         help="base folder for received files; a folder named after you is created inside")
     parser.add_argument("--port", dest="port_option", type=valid_port, default=None,
-                        help="peer-to-peer TCP port (overrides the positional port)")
+                        help="peer-to-peer TCP port")
     parser.add_argument("--discovery-port", type=int, default=DISCOVERY_PORT, help="UDP discovery port")
-    parser.add_argument("--web-port", type=int, default=8000,
-                        help="local port used by the app's embedded webview")
+    parser.add_argument("--web-port", type=int, default=None,
+                        help="local port used by the app's embedded webview (default: auto-allocated)")
     args = parser.parse_args()
 
-    name = (args.name_option or args.positional_name or "MeshDrop").strip() or "MeshDrop"
-    port = args.port_option if args.port_option is not None else args.positional_port
-    downloads_base = args.downloads if args.downloads.is_absolute() else ROOT / args.downloads
+    name, port, auto_port = parse_peer_args(args.args, args.name_option, args.port_option)
     user_folder = secure_filename(name) or "MeshDrop"
+    downloads_base = args.downloads if args.downloads.is_absolute() else ROOT / args.downloads
     downloads_dir = downloads_base / user_folder
-    node = MeshDrop(name, args.share, downloads_dir, port, args.discovery_port)
+
+    if args.share is not None:
+        share_dir = args.share if args.share.is_absolute() else ROOT / args.share
+    else:
+        share_dir = ROOT / "shared" / user_folder
+
+    node = MeshDrop(name, share_dir, downloads_dir, port, args.discovery_port, auto_port=auto_port)
     server = None
+    storage_dir = None
     try:
         node.start()
-        server = make_server("127.0.0.1", args.web_port, create_app(node), threaded=True)
+        target_web_port = args.web_port if args.web_port is not None else 0
+        try:
+            server = make_server("127.0.0.1", target_web_port, create_app(node), threaded=True)
+        except OSError:
+            if args.web_port is not None:
+                print(f"[MeshDrop] Web port {args.web_port} is busy; allocating an available port.", flush=True)
+            server = make_server("127.0.0.1", 0, create_app(node), threaded=True)
+
         threading.Thread(target=server.serve_forever, daemon=True).start()
         url = f"http://127.0.0.1:{server.server_port}"
+
+        # Dedicated isolated storage directory per peer instance
+        storage_dir = Path(tempfile.gettempdir()) / f"meshdrop_wv_{user_folder}_{server.server_port}"
+        storage_dir.mkdir(parents=True, exist_ok=True)
+
         window = webview.create_window(
-            "MeshDrop",
+            f"MeshDrop — {name}",
             url,
             width=1440,
             height=940,
@@ -274,7 +299,7 @@ def main() -> int:
             background_color="#08090b",
         )
         window.events.before_show += apply_windows_window_icon
-        webview.start(debug=False)
+        webview.start(debug=False, private_mode=True, storage_path=str(storage_dir))
     except Exception as exc:
         print(f"Could not start the MeshDrop desktop app: {exc}")
         return 1
@@ -285,6 +310,8 @@ def main() -> int:
             server.shutdown()
             server.server_close()
         node.close()
+        if storage_dir is not None and storage_dir.exists():
+            shutil.rmtree(storage_dir, ignore_errors=True)
     return 0
 
 

@@ -50,7 +50,7 @@ def guess_lan_ip() -> str:
 
 
 class MeshDropServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
-    allow_reuse_address = True
+    allow_reuse_address = (sys.platform != "win32")
     daemon_threads = True
     app: "MeshDrop"
 
@@ -98,11 +98,12 @@ class RequestHandler(socketserver.StreamRequestHandler):
 
 class MeshDrop:
     def __init__(self, name: str, share_dir: Path, downloads_dir: Path,
-                 tcp_port: int, discovery_port: int) -> None:
+                 tcp_port: int, discovery_port: int, auto_port: bool = True) -> None:
         self.peer_id = uuid.uuid4().hex[:8]
         self.name = name
         self.host = guess_lan_ip()
         self.tcp_port = tcp_port
+        self.auto_port = auto_port
         self.discovery_port = discovery_port
         self.share_dir = share_dir.expanduser().resolve()
         self.downloads_dir = downloads_dir.expanduser().resolve()
@@ -138,7 +139,24 @@ class MeshDrop:
         return result
 
     def start(self) -> None:
-        self.server = MeshDropServer(("0.0.0.0", self.tcp_port), RequestHandler)
+        server = None
+        attempted_port = self.tcp_port
+        max_attempts = 100 if self.auto_port else 1
+        last_error = None
+        for offset in range(max_attempts):
+            port = attempted_port + offset
+            try:
+                server = MeshDropServer(("0.0.0.0", port), RequestHandler)
+                if port != attempted_port:
+                    self.note(f"TCP port {attempted_port} was busy; bound to port {port} instead.")
+                self.tcp_port = port
+                break
+            except OSError as exc:
+                last_error = exc
+                continue
+        if server is None:
+            raise OSError(f"Could not bind TCP server to port {attempted_port}: {last_error}")
+        self.server = server
         self.server.app = self
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         threading.Thread(target=self._discovery_listener, daemon=True).start()
@@ -165,6 +183,11 @@ class MeshDrop:
                 sock.sendto(message, ("255.255.255.255", self.discovery_port))
             except OSError as exc:
                 self.note(f"Peer announcement failed: {exc}")
+            try:
+                # Also announce on loopback so two instances on one computer always find each other
+                sock.sendto(message, ("127.0.0.1", self.discovery_port))
+            except OSError:
+                pass
             self.stop_event.wait(DISCOVERY_INTERVAL)
         sock.close()
 
@@ -189,8 +212,12 @@ class MeshDrop:
                     if payload.get("type") != "meshdrop-peer" or payload.get("id") == self.peer_id:
                         continue
                     peer_id = str(payload["id"])
+                    peer_host = str(payload.get("host") or address[0])
+                    # If this is another instance running on the same computer, route via loopback
+                    if address[0] == "127.0.0.1" and (peer_host == self.host or peer_host == "127.0.0.1"):
+                        peer_host = "127.0.0.1"
                     peer = {"id": peer_id, "name": str(payload.get("name", "Peer")),
-                            "host": str(payload.get("host") or address[0]),
+                            "host": peer_host,
                             "port": int(payload["port"]), "last_seen": time.time(), "manual": False}
                     with self.peers_lock:
                         self.peers[peer_id] = peer
@@ -376,18 +403,55 @@ def command_loop(app: MeshDrop) -> None:
             print(f"Error: {exc}")
 
 
+def parse_peer_args(pos_args: list[str], name_opt: str | None = None,
+                    port_opt: int | None = None) -> tuple[str, int, bool]:
+    """Parse peer name, port, and auto_port flag flexibly from command arguments."""
+    pos_name = None
+    pos_port = None
+    explicit_port = port_opt is not None
+
+    if len(pos_args) == 1:
+        val = pos_args[0].strip()
+        if val.isdigit() and 1 <= int(val) <= 65535:
+            pos_port = int(val)
+            explicit_port = True
+        else:
+            pos_name = val
+    elif len(pos_args) >= 2:
+        val0, val1 = pos_args[0].strip(), pos_args[1].strip()
+        if val0.isdigit() and 1 <= int(val0) <= 65535:
+            pos_port = int(val0)
+            pos_name = val1
+            explicit_port = True
+        elif val1.isdigit() and 1 <= int(val1) <= 65535:
+            pos_name = val0
+            pos_port = int(val1)
+            explicit_port = True
+        else:
+            pos_name = " ".join(pos_args)
+
+    name = (name_opt or pos_name or "MeshDrop").strip() or "MeshDrop"
+    port = port_opt if port_opt is not None else (pos_port if pos_port is not None else DEFAULT_TCP_PORT)
+    auto_port = not explicit_port
+    return name, port, auto_port
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Share files directly with peers on your local network")
-    parser.add_argument("--name", default=socket.gethostname(), help="name shown to other peers")
-    parser.add_argument("--share", type=Path, default=Path("shared"), help="folder to make available")
-    parser.add_argument("--downloads", type=Path, default=Path("downloads"), help="where received files are saved")
-    parser.add_argument("--port", type=int, default=DEFAULT_TCP_PORT, help="TCP file-transfer port")
+    parser.add_argument("args", nargs="*", help="optional peer name or port (e.g. 'Alice', '50000 Alice')")
+    parser.add_argument("--name", default=None, help="name shown to other peers")
+    parser.add_argument("--share", type=Path, default=None, help="folder to make available")
+    parser.add_argument("--downloads", type=Path, default=None, help="where received files are saved")
+    parser.add_argument("--port", type=int, default=None, help="TCP file-transfer port")
     parser.add_argument("--discovery-port", type=int, default=DISCOVERY_PORT, help="UDP discovery port")
     args = parser.parse_args()
-    if not (1 <= args.port <= 65535 and 1 <= args.discovery_port <= 65535):
-        parser.error("ports must be between 1 and 65535")
 
-    app = MeshDrop(args.name, args.share, args.downloads, args.port, args.discovery_port)
+    name, port, auto_port = parse_peer_args(args.args, args.name, args.port)
+    user_folder = "".join(c for c in name if c.isalnum() or c in ("-", "_")).strip() or "MeshDrop"
+    share_dir = (args.share if args.share is not None else Path("shared") / user_folder)
+    downloads_dir = (args.downloads if args.downloads is not None else Path("downloads") / user_folder)
+
+    app = MeshDrop(name, share_dir, downloads_dir, port, args.discovery_port, auto_port=auto_port)
     try:
         app.start()
         command_loop(app)

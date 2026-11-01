@@ -83,6 +83,9 @@ function App() {
     try {
       const data = await api("/api/state");
       setSnapshot(data);
+      if (data?.identity?.name) {
+        document.title = `MeshDrop — ${data.identity.name}`;
+      }
       setActivePeerId((current) => current && data.peers.some((peer) => peer.id === current)
         ? current : data.peers[0]?.id || null);
     } catch (error) {
