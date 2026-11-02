@@ -4,4 +4,3 @@ shared/*
 !shared/.gitkeep
 downloads/
 web/node_modules/
-web/dist/
